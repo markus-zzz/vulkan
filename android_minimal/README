@@ -1,0 +1,25 @@
+1. Setup project
+================
+> android update project --name "minimal-vulkan" --path . --target 1
+
+2. Build and install
+====================
+> ndk-build && ant debug && adb install -r bin/minimal-vulkan-debug.apk
+
+3. Run and debug
+================
+When ndk-gdb is run for the first time in a project it pulls the linked *.so files
+from the device so that gdb gets access to them (in gdb do 'info sharedlibrary' to see
+status). However since we do not actually link to libvulkan.so we need to pull this
+ourselves. This setup step is quite essential since without it gdb on arm64 has
+problems stepping over calls into libvulkan.so.
+
+So to have ndk-gdb build the local directory structure and fetch the *.so files it
+knows about and then manually fetch libvulkan.so do the following:
+
+> ndk-gdb --launch
+> adb pull /system/lib64/libvulkan.so obj/local/arm64-v8a/system/lib64/
+
+After that it is sufficient to simply issue:
+
+> ndk-gdb --launch
