@@ -31,6 +31,8 @@ For more information, please refer to <http://unlicense.org>
 #define VK_NO_PROTOTYPES
 #if __ANDROID__
 #define VK_USE_PLATFORM_ANDROID_KHR
+#else
+#define VK_USE_PLATFORM_XCB_KHR
 #endif
 #include <vulkan/vulkan.h>
 

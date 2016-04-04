@@ -180,6 +180,8 @@ DEF_VK_FCN(vkCreateDisplayPlaneSurfaceKHR)
 DEF_VK_FCN(vkCreateSharedSwapchainsKHR)
 #if __ANDROID__
 DEF_VK_FCN(vkCreateAndroidSurfaceKHR)
+#else
+DEF_VK_FCN(vkCreateXcbSurfaceKHR)
 #endif
 DEF_VK_FCN(vkCreateDebugReportCallbackEXT)
 DEF_VK_FCN(vkDestroyDebugReportCallbackEXT)

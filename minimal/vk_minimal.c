@@ -25,34 +25,17 @@ OTHER DEALINGS IN THE SOFTWARE.
 For more information, please refer to <http://unlicense.org>
 */
 
+#include "vk_minimal.h"
 #include <assert.h>
-
-#include <android/log.h>
-#include <android_native_app_glue.h>
-
+#include <stdlib.h>
+#include <string.h>
 #include "vulkan_dlfcn/vulkan_dlfcn.h"
 
-#define LOG_TAG "minimal_vulkan"
-
-#define LOGI(...) ((void)__android_log_print(ANDROID_LOG_INFO, LOG_TAG, __VA_ARGS__))
-#define LOGW(...) ((void)__android_log_print(ANDROID_LOG_WARN, LOG_TAG, __VA_ARGS__))
-
-struct app_context {
-	VkDevice device;
-	VkQueue queue;
-	VkCommandBuffer cmd;
-
-	struct {
-		VkSwapchainKHR swapchain;
-		VkImage *images;
-	} swapchain;
-
-	struct {
-		VkImage image;
-		VkDeviceMemory dm;
-		uint32_t size;
-	} canvas;
-};
+static VkExtent3D extent_2d_to_3d(VkExtent2D e)
+{
+	VkExtent3D e3 = {e.width, e.height, 1};
+	return e3;
+}
 
 static uint32_t get_memory_type_idx(VkPhysicalDevice device, uint32_t typebits, VkFlags properties)
 {
@@ -72,55 +55,30 @@ static uint32_t get_memory_type_idx(VkPhysicalDevice device, uint32_t typebits, 
 	return 0;
 }
 
-static void draw_grid(uint32_t *rgba_data)
+static void draw_grid(struct vk_minimal_context *actx, VkSubresourceLayout *layout, void *rgba_data)
 {
-	int x, y;
-	for (x = 0; x < 1920; x++)
+	uint32_t color = 0xffffffff;
+	uint32_t x, y;
+
+	for (y = 0; y < actx->extent.height; y++)
 	{
-		for (y = 0; y < 1080; y++)
+		for (x = 0; x < actx->extent.width; x++)
 		{
-			rgba_data[y*1920+x] = (x % 100 == 0 || y % 100 == 0) ? 0xffffffff : 0x0;
+			((uint32_t *)rgba_data)[x] = (x % 100 == 0 || y % 100 == 0) ? color : 0x0;
 		}
+		rgba_data += layout->rowPitch;
 	}
 }
 
-void vk_init(struct app_context *actx, ANativeWindow *window)
+void vk_minimal_init(struct vk_minimal_context *actx)
 {
 	VkResult err;
-
-	VkApplicationInfo app;
-	app.sType = VK_STRUCTURE_TYPE_APPLICATION_INFO;
-	app.pNext = NULL;
-	app.pApplicationName = NULL;
-	app.applicationVersion = 0;
-	app.pEngineName = NULL;
-	app.engineVersion = 0;
-	app.apiVersion = VK_MAKE_VERSION (1,0,2);
-
-	const char *iextensions[] = {
-	  "VK_KHR_surface",
-	  "VK_KHR_android_surface"
-	};
-
-	VkInstanceCreateInfo inst_info;
-	inst_info.sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO;
-	inst_info.pNext = NULL;
-	inst_info.pApplicationInfo = &app;
-	inst_info.enabledLayerCount = 0;
-	inst_info.ppEnabledLayerNames = NULL;
-	inst_info.enabledExtensionCount = sizeof(iextensions)/sizeof(iextensions[0]);
-	inst_info.ppEnabledExtensionNames = iextensions;
-
-	VkInstance inst;
-	err = vkCreateInstance(&inst_info, NULL, &inst);
-	assert(err == VK_SUCCESS);
-
-	uint32_t gpu_count;
-	err = vkEnumeratePhysicalDevices(inst, &gpu_count, NULL);
+uint32_t gpu_count;
+	err = vkEnumeratePhysicalDevices(actx->instance, &gpu_count, NULL);
 	assert(err == VK_SUCCESS && gpu_count > 0);
 
 	VkPhysicalDevice physical_devices[gpu_count];
-	err = vkEnumeratePhysicalDevices(inst, &gpu_count, physical_devices);
+	err = vkEnumeratePhysicalDevices(actx->instance, &gpu_count, physical_devices);
 	assert(err == VK_SUCCESS);
 	const VkPhysicalDevice gpu = physical_devices[0];
 
@@ -131,6 +89,12 @@ void vk_init(struct app_context *actx, ANativeWindow *window)
 	VkQueueFamilyProperties queue_props[queue_count];
 	vkGetPhysicalDeviceQueueFamilyProperties(gpu, &queue_count, queue_props);
 	assert(queue_props[0].queueFlags & VK_QUEUE_GRAPHICS_BIT);
+	if (vkGetPhysicalDeviceSurfaceSupportKHR)
+	{
+		VkBool32 supported;
+		vkGetPhysicalDeviceSurfaceSupportKHR(gpu, 0, actx->surface, &supported);
+		assert(supported);
+	}
 
 	float queue_priorities[] = {0.0};
 	VkDeviceQueueCreateInfo dqci;
@@ -155,42 +119,47 @@ void vk_init(struct app_context *actx, ANativeWindow *window)
 	dci.ppEnabledExtensionNames = dextensions;
 	dci.pEnabledFeatures = NULL;
 
-	VkDevice device;
 	err = vkCreateDevice(gpu, &dci, NULL, &actx->device);
 	assert(err == VK_SUCCESS);
 
 	vkGetDeviceQueue(actx->device, 0, 0, &actx->queue);
 
-	VkAndroidSurfaceCreateInfoKHR asci;
-	asci.sType = VK_STRUCTURE_TYPE_ANDROID_SURFACE_CREATE_INFO_KHR;
-	asci.pNext = NULL;
-	asci.flags = 0;
-	asci.window = window;
+	VkSurfaceCapabilitiesKHR surf_cap;
+	err = vkGetPhysicalDeviceSurfaceCapabilitiesKHR(gpu, actx->surface, &surf_cap);
+	assert(err == VK_SUCCESS);
+	actx->extent = surf_cap.currentExtent;
 
-	VkSurfaceKHR surface;
-	err = vkCreateAndroidSurfaceKHR(inst, &asci, NULL, &surface);
+	uint32_t formatCount;
+	err = vkGetPhysicalDeviceSurfaceFormatsKHR(gpu, actx->surface, &formatCount, NULL);
+	assert(err == VK_SUCCESS);
+	VkSurfaceFormatKHR surfFormats[formatCount];
+	err = vkGetPhysicalDeviceSurfaceFormatsKHR(gpu, actx->surface, &formatCount, surfFormats);
 	assert(err == VK_SUCCESS);
 
-	VkSurfaceCapabilitiesKHR surf_cap;
-	err = vkGetPhysicalDeviceSurfaceCapabilitiesKHR(gpu, surface, &surf_cap);
+	uint32_t presentModeCount;
+	err = vkGetPhysicalDeviceSurfacePresentModesKHR(gpu, actx->surface, &presentModeCount, NULL);
+	assert(err == VK_SUCCESS && presentModeCount > 0);
+	VkPresentModeKHR presentModes[presentModeCount];
+	err = vkGetPhysicalDeviceSurfacePresentModesKHR(gpu, actx->surface, &presentModeCount, presentModes);
 	assert(err == VK_SUCCESS);
 
 	VkSwapchainCreateInfoKHR sci;
+	memset(&sci, 0, sizeof(sci));
 	sci.sType = VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR;
 	sci.pNext = NULL;
-	sci.surface = surface;
+	sci.surface = actx->surface;
 	sci.minImageCount = 3;
-	sci.imageFormat = VK_FORMAT_R8G8B8A8_UNORM;
+	sci.imageFormat = surfFormats[0].format;
 	sci.imageColorSpace = VK_COLORSPACE_SRGB_NONLINEAR_KHR;
-	sci.imageExtent = surf_cap.currentExtent;
-	sci.imageUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
+	sci.imageExtent = actx->extent;
+	sci.imageUsage = VK_IMAGE_USAGE_TRANSFER_DST_BIT;
 	sci.preTransform = VK_SURFACE_TRANSFORM_IDENTITY_BIT_KHR;
 	sci.compositeAlpha = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR;
 	sci.imageArrayLayers = 1;
 	sci.imageSharingMode = VK_SHARING_MODE_EXCLUSIVE;
 	sci.queueFamilyIndexCount = 0;
 	sci.pQueueFamilyIndices = NULL;
-	sci.presentMode = VK_PRESENT_MODE_FIFO_KHR;
+	sci.presentMode = presentModes[0];
 	sci.oldSwapchain = NULL;
 	sci.clipped = VK_TRUE;
 
@@ -202,20 +171,20 @@ void vk_init(struct app_context *actx, ANativeWindow *window)
 	actx->swapchain.images = malloc(sizeof(actx->swapchain.images[0])*count);
 	vkGetSwapchainImagesKHR(actx->device, actx->swapchain.swapchain, &count, actx->swapchain.images);
 
-
 	VkImageCreateInfo ici;
-	const VkExtent3D e3d = {1920, 1080, 1};
+	memset(&ici, 0, sizeof(ici));
 	ici.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
 	ici.pNext = NULL;
 	ici.imageType = VK_IMAGE_TYPE_2D;
-	ici.format = VK_FORMAT_R8G8B8A8_UNORM;
-	ici.extent = e3d;
+	ici.format = surfFormats[0].format;
+	ici.extent = extent_2d_to_3d(actx->extent);
 	ici.mipLevels = 1;
 	ici.arrayLayers = 1;
 	ici.samples = VK_SAMPLE_COUNT_1_BIT;
 	ici.tiling = VK_IMAGE_TILING_LINEAR;
 	ici.usage = VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
 	ici.flags = 0;
+	ici.initialLayout = VK_IMAGE_LAYOUT_PREINITIALIZED;
 
 	err = vkCreateImage(actx->device, &ici, NULL, &actx->canvas.image);
 	assert(err == VK_SUCCESS);
@@ -239,7 +208,7 @@ void vk_init(struct app_context *actx, ANativeWindow *window)
 	cpci.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
 	cpci.pNext = NULL;
 	cpci.queueFamilyIndex = 0;
-	cpci.flags = 0;
+	cpci.flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT;
 
 	VkCommandPool cmd_pool;
 	err = vkCreateCommandPool(actx->device, &cpci, NULL, &cmd_pool);
@@ -256,7 +225,35 @@ void vk_init(struct app_context *actx, ANativeWindow *window)
 	assert(err == VK_SUCCESS);
 }
 
-void vk_draw(struct app_context *actx)
+void vk_minimal_imb(struct vk_minimal_context *actx,
+                    VkImage image,
+                    VkAccessFlags srcAccessMask,
+                    VkAccessFlags dstAccessMask,
+                    VkImageLayout oldLayout,
+                    VkImageLayout newLayout)
+{
+	VkImageMemoryBarrier imb;
+	memset(&imb, 0, sizeof(imb));
+	imb.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+	imb.pNext = NULL;
+	imb.srcAccessMask = srcAccessMask;
+	imb.dstAccessMask = dstAccessMask;
+	imb.oldLayout = oldLayout;
+	imb.newLayout = newLayout;
+	imb.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+	imb.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+	imb.image = image;
+	imb.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+	imb.subresourceRange.baseMipLevel = 0;
+	imb.subresourceRange.levelCount = 1;
+	imb.subresourceRange.baseArrayLayer = 0;
+	imb.subresourceRange.layerCount = 1;
+
+	vkCmdPipelineBarrier(actx->cmd, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, 0, 0, NULL, 0, NULL, 1, &imb);
+}
+
+
+void vk_minimal_draw(struct vk_minimal_context *actx)
 {
 	VkResult err;
 	void *data;
@@ -267,7 +264,15 @@ void vk_draw(struct app_context *actx)
 	err = vkMapMemory(actx->device, actx->canvas.dm, 0, actx->canvas.size, 0, &data);
 	assert(err == VK_SUCCESS);
 
-	draw_grid(data);
+	VkImageSubresource is;
+	is.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+	is.mipLevel = 0;
+	is.arrayLayer = 0;
+
+	VkSubresourceLayout layout;
+	vkGetImageSubresourceLayout(actx->device, actx->canvas.image, &is, &layout);
+
+	draw_grid(actx, &layout, data);
 
 	vkUnmapMemory(actx->device, actx->canvas.dm);
 
@@ -275,6 +280,7 @@ void vk_draw(struct app_context *actx)
 	assert(err == VK_SUCCESS);
 
 	VkCommandBufferInheritanceInfo cbii;
+	memset(&cbii, 0, sizeof(cbii));
 	cbii.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_INHERITANCE_INFO;
 	cbii.pNext = NULL;
 	cbii.renderPass = VK_NULL_HANDLE;
@@ -285,6 +291,7 @@ void vk_draw(struct app_context *actx)
 	cbii.pipelineStatistics = 0;
 
 	VkCommandBufferBeginInfo cbbi;
+	memset(&cbbi, 0, sizeof(cbbi));
 	cbbi.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
 	cbbi.pNext = NULL;
 	cbbi.flags = 0;
@@ -293,50 +300,72 @@ void vk_draw(struct app_context *actx)
 	err = vkBeginCommandBuffer(actx->cmd, &cbbi);
 	assert(err == VK_SUCCESS);
 
-	VkImageCopy copy_region = {
-	    .srcSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1},
-	    .srcOffset = {0, 0, 0},
-	    .dstSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1},
-	    .dstOffset = {0, 0, 0},
-	    .extent = {1920, 1080, 1},
-	};
+	vk_minimal_imb(actx, actx->canvas.image, VK_ACCESS_MEMORY_WRITE_BIT, VK_ACCESS_MEMORY_READ_BIT, VK_IMAGE_LAYOUT_PREINITIALIZED, VK_IMAGE_LAYOUT_GENERAL);
 
-	uint32_t idx;
+	uint32_t idx = 0;
 
-	err = vkAcquireNextImageKHR(actx->device, actx->swapchain.swapchain, UINT64_MAX,
-	                            VK_NULL_HANDLE, VK_NULL_HANDLE, &idx);
+	VkSemaphore acquire_sem;
+	VkSemaphore copy_sem;
+	VkSemaphoreCreateInfo csi;
+	csi.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO;
+	csi.pNext = NULL;
+	csi.flags = 0;
+
+	err = vkCreateSemaphore(actx->device, &csi, NULL, &acquire_sem);
+	assert(err == VK_SUCCESS);
+	err = vkCreateSemaphore(actx->device, &csi, NULL, &copy_sem);
 	assert(err == VK_SUCCESS);
 
-	vkCmdCopyImage(actx->cmd,
-	               actx->canvas.image, VK_IMAGE_LAYOUT_GENERAL,
-	               actx->swapchain.images[idx], VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
-	               1, &copy_region);
+	err = vkAcquireNextImageKHR(actx->device, actx->swapchain.swapchain, 0, acquire_sem, VK_NULL_HANDLE, &idx);
+	assert(err == VK_SUCCESS);
+
+	vk_minimal_imb(actx, actx->swapchain.images[idx], VK_ACCESS_MEMORY_READ_BIT, VK_ACCESS_MEMORY_WRITE_BIT, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_GENERAL);
+
+	VkImageCopy ic;
+	memset(&ic, 0, sizeof(ic));
+	ic.srcSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+	ic.srcSubresource.mipLevel = 0;
+	ic.srcSubresource.baseArrayLayer = 0;
+	ic.srcSubresource.layerCount = 1;
+	ic.srcOffset.x = 0;
+	ic.srcOffset.y = 0;
+	ic.srcOffset.z = 0;
+	ic.dstSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+	ic.dstSubresource.mipLevel = 0;
+	ic.dstSubresource.baseArrayLayer = 0;
+	ic.dstSubresource.layerCount = 1;
+	ic.dstOffset.x = 0;
+	ic.dstOffset.y = 0;
+	ic.dstOffset.z = 0;
+	ic.extent = extent_2d_to_3d(actx->extent);
+
+	vkCmdCopyImage(actx->cmd, actx->canvas.image, VK_IMAGE_LAYOUT_GENERAL, actx->swapchain.images[idx], VK_IMAGE_LAYOUT_GENERAL, 1, &ic);
+
+	vk_minimal_imb(actx, actx->swapchain.images[idx], VK_ACCESS_MEMORY_WRITE_BIT, VK_ACCESS_MEMORY_READ_BIT, VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR);
 
 	err = vkEndCommandBuffer(actx->cmd);
 	assert(err == VK_SUCCESS);
 
-	VkCommandBuffer cmd_bufs[] = {actx->cmd};
-	VkSubmitInfo submit_info = {.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO,
-	                            .pNext = NULL,
-	                            .waitSemaphoreCount = 0,
-	                            .pWaitSemaphores = NULL,
-	                            .pWaitDstStageMask = NULL,
-	                            .commandBufferCount = 1,
-	                            .pCommandBuffers = cmd_bufs,
-	                            .signalSemaphoreCount = 0,
-	                            .pSignalSemaphores = NULL};
+	VkSubmitInfo si;
+	memset(&si, 0, sizeof(si));
+	si.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+	si.pNext = NULL;
+	si.waitSemaphoreCount = 1;
+	si.pWaitSemaphores = &acquire_sem;
+	si.pWaitDstStageMask = NULL;
+	si.commandBufferCount = 1;
+	si.pCommandBuffers = &actx->cmd;
+	si.signalSemaphoreCount = 1;
+	si.pSignalSemaphores = &copy_sem;
 
-	err = vkQueueSubmit(actx->queue, 1, &submit_info, VK_NULL_HANDLE);
-	assert(err == VK_SUCCESS);
-
-	err = vkQueueWaitIdle(actx->queue);
+	err = vkQueueSubmit(actx->queue, 1, &si, VK_NULL_HANDLE);
 	assert(err == VK_SUCCESS);
 
 	VkPresentInfoKHR pi;
 	pi.sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR;
 	pi.pNext = NULL;
-	pi.waitSemaphoreCount = 0;
-	pi.pWaitSemaphores = NULL;
+	pi.waitSemaphoreCount = 1;
+	pi.pWaitSemaphores = &copy_sem;
 	pi.swapchainCount = 1;
 	pi.pSwapchains = &actx->swapchain.swapchain;
 	pi.pImageIndices = &idx;
@@ -344,73 +373,11 @@ void vk_draw(struct app_context *actx)
 
 	err = vkQueuePresentKHR(actx->queue, &pi);
 	assert(err == VK_SUCCESS);
+
+	err = vkQueueWaitIdle(actx->queue);
+	assert(err == VK_SUCCESS);
+
+	vkDestroySemaphore(actx->device, acquire_sem, NULL);
+	vkDestroySemaphore(actx->device, copy_sem, NULL);
 }
 
-static void handle_cmd(struct android_app* app, int32_t cmd)
-{
-	switch (cmd)
-	{
-		case APP_CMD_SAVE_STATE:
-		break;
-		case APP_CMD_INIT_WINDOW:
-		// The window is being shown, get it ready.
-		if (app->window != NULL)
-		{
-			vk_init(app->userData, app->window);
-		}
-		break;
-		case APP_CMD_TERM_WINDOW:
-		// The window is being hidden or closed, clean it up.
-		break;
-		case APP_CMD_GAINED_FOCUS:
-		// Start animation
-		break;
-		case APP_CMD_LOST_FOCUS:
-		// Stop animation
-		break;
-	}
-}
-
-void android_main(struct android_app* state)
-{
-	// Make sure glue isn't stripped.
-	app_dummy();
-
-	// Load libvulkan.so
-	vulkan_dlfcn_init();
-
-	struct app_context actx;
-	memset(&actx, 0, sizeof(actx));
-	state->userData = &actx;
-
-	if (state->savedState != NULL)
-	{
-	}
-
-	state->onAppCmd = handle_cmd;
-
-	while (1)
-	{
-		int ident;
-		int events;
-		struct android_poll_source* source;
-
-		while ((ident=ALooper_pollAll(1000, NULL, &events, (void**)&source)) != ALOOPER_POLL_ERROR)
-		{
-			if (source != NULL)
-			{
-				source->process(state, source);
-			}
-
-			if (state->destroyRequested != 0)
-			{
-				return;
-			}
-
-			if (actx.device != VK_NULL_HANDLE)
-			{
-				vk_draw(&actx);
-			}
-		}
-	}
-}

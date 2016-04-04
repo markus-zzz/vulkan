@@ -28,7 +28,7 @@ LOCAL_PATH := $(call my-dir)
 include $(CLEAR_VARS)
 
 LOCAL_MODULE    := minimal-vulkan
-LOCAL_SRC_FILES := main.c vulkan_dlfcn/vulkan_dlfcn.c
+LOCAL_SRC_FILES := main.c vk_minimal.c vulkan_dlfcn/vulkan_dlfcn.c
 LOCAL_LDLIBS    := -llog -landroid
 LOCAL_STATIC_LIBRARIES := android_native_app_glue
 

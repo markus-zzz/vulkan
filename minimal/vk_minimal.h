@@ -25,46 +25,34 @@ OTHER DEALINGS IN THE SOFTWARE.
 For more information, please refer to <http://unlicense.org>
 */
 
-#include "vulkan_dlfcn.h"
-#include <dlfcn.h>
+#ifndef VK_MINIMAL_H
+#define VK_MINIMAL_H
 
-#if __ANDROID__
+#include "vulkan_dlfcn/vulkan_dlfcn.h"
 
-#include <android/log.h>
-#define  LOG_TAG    "vulkan-dlfcn"
-#define  LOGD(...)  __android_log_print(ANDROID_LOG_DEBUG, LOG_TAG, __VA_ARGS__)
-#define  LOGE(...)  __android_log_print(ANDROID_LOG_ERROR, LOG_TAG, __VA_ARGS__)
-#define  LOGI(...)  __android_log_print(ANDROID_LOG_INFO, LOG_TAG, __VA_ARGS__)
+struct vk_minimal_context {
+	VkInstance instance;
+	VkDevice device;
+	VkSurfaceKHR surface;
+	VkQueue queue;
+	VkCommandBuffer cmd;
 
-#else
+	struct {
+		VkSwapchainKHR swapchain;
+		VkImage *images;
+	} swapchain;
 
-#include <stdio.h>
-#define  LOGD(...) printf("D:"__VA_ARGS__)
-#define  LOGE(...) printf("E:"__VA_ARGS__)
-#define  LOGI(...) printf("I:"__VA_ARGS__)
+	struct {
+		VkImage image;
+		VkDeviceMemory dm;
+		uint32_t size;
+	} canvas;
+
+	uint32_t cntr;
+	VkExtent2D extent;
+};
+
+void vk_minimal_init(struct vk_minimal_context *actx);
+void vk_minimal_draw(struct vk_minimal_context *actx);
 
 #endif
-
-static void *vulkan_so = NULL;
-
-#define DEF_VK_FCN(x) PFN_##x x = NULL;
-#include "vulkan_dlfcn.def"
-#undef DEF_VK_FCN
-
-
-void vulkan_dlfcn_init(void)
-{
-	vulkan_so = dlopen("libvulkan.so", RTLD_NOW | RTLD_GLOBAL);
-	if (!vulkan_so)
-	{
-		LOGE("Vulkan not available: %s\n", dlerror());
-	}
-
-#define DEF_VK_FCN(x) \
-	if (!(x = (PFN_##x)dlsym(vulkan_so, #x))) { \
-		LOGE("Vulkan symbol '%s' is not available: %s\n", #x, dlerror()); \
-	}
-#include "vulkan_dlfcn.def"
-#undef DEF_VK_FCN
-}
-
