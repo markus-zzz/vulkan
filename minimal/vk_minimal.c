@@ -60,6 +60,7 @@ static void draw_grid(struct vk_minimal_context *actx, VkSubresourceLayout *layo
 	uint32_t color = 0xffffffff;
 	uint32_t x, y;
 
+	rgba_data += layout->offset;
 	for (y = 0; y < actx->extent.height; y++)
 	{
 		for (x = 0; x < actx->extent.width; x++)
@@ -73,7 +74,7 @@ static void draw_grid(struct vk_minimal_context *actx, VkSubresourceLayout *layo
 void vk_minimal_init(struct vk_minimal_context *actx)
 {
 	VkResult err;
-uint32_t gpu_count;
+	uint32_t gpu_count;
 	err = vkEnumeratePhysicalDevices(actx->instance, &gpu_count, NULL);
 	assert(err == VK_SUCCESS && gpu_count > 0);
 
@@ -96,8 +97,9 @@ uint32_t gpu_count;
 		assert(supported);
 	}
 
-	float queue_priorities[] = {0.0};
+	float queue_priorities[] = {1.0};
 	VkDeviceQueueCreateInfo dqci;
+	memset(&dqci, 0, sizeof(dqci));
 	dqci.sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO;
 	dqci.pNext = NULL;
 	dqci.queueFamilyIndex = 0;
@@ -109,6 +111,7 @@ uint32_t gpu_count;
 	};
 
 	VkDeviceCreateInfo dci;
+	memset(&dci, 0, sizeof(dci));
 	dci.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;
 	dci.pNext = NULL;
 	dci.queueCreateInfoCount = 1;
@@ -127,11 +130,12 @@ uint32_t gpu_count;
 	VkSurfaceCapabilitiesKHR surf_cap;
 	err = vkGetPhysicalDeviceSurfaceCapabilitiesKHR(gpu, actx->surface, &surf_cap);
 	assert(err == VK_SUCCESS);
+	assert(surf_cap.supportedUsageFlags & VK_IMAGE_USAGE_TRANSFER_DST_BIT);
 	actx->extent = surf_cap.currentExtent;
 
 	uint32_t formatCount;
 	err = vkGetPhysicalDeviceSurfaceFormatsKHR(gpu, actx->surface, &formatCount, NULL);
-	assert(err == VK_SUCCESS);
+	assert(err == VK_SUCCESS && formatCount > 0);
 	VkSurfaceFormatKHR surfFormats[formatCount];
 	err = vkGetPhysicalDeviceSurfaceFormatsKHR(gpu, actx->surface, &formatCount, surfFormats);
 	assert(err == VK_SUCCESS);
@@ -148,19 +152,19 @@ uint32_t gpu_count;
 	sci.sType = VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR;
 	sci.pNext = NULL;
 	sci.surface = actx->surface;
-	sci.minImageCount = 3;
+	sci.minImageCount = surf_cap.maxImageCount;
 	sci.imageFormat = surfFormats[0].format;
-	sci.imageColorSpace = VK_COLORSPACE_SRGB_NONLINEAR_KHR;
+	sci.imageColorSpace = surfFormats[0].colorSpace;
 	sci.imageExtent = actx->extent;
 	sci.imageUsage = VK_IMAGE_USAGE_TRANSFER_DST_BIT;
-	sci.preTransform = VK_SURFACE_TRANSFORM_IDENTITY_BIT_KHR;
+	sci.preTransform = surf_cap.currentTransform;
 	sci.compositeAlpha = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR;
 	sci.imageArrayLayers = 1;
 	sci.imageSharingMode = VK_SHARING_MODE_EXCLUSIVE;
 	sci.queueFamilyIndexCount = 0;
 	sci.pQueueFamilyIndices = NULL;
 	sci.presentMode = presentModes[0];
-	sci.oldSwapchain = NULL;
+	sci.oldSwapchain = VK_NULL_HANDLE;
 	sci.clipped = VK_TRUE;
 
 	err = vkCreateSwapchainKHR(actx->device, &sci, NULL, &actx->swapchain.swapchain);
@@ -193,6 +197,7 @@ uint32_t gpu_count;
 	vkGetImageMemoryRequirements(actx->device, actx->canvas.image, &mr);
 
 	VkMemoryAllocateInfo mai;
+	memset(&mai, 0, sizeof(mai));
 	mai.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
 	mai.pNext = NULL;
 	mai.allocationSize = actx->canvas.size = mr.size;
@@ -205,6 +210,7 @@ uint32_t gpu_count;
 	assert(err == VK_SUCCESS);
 
 	VkCommandPoolCreateInfo cpci;
+	memset(&cpci, 0, sizeof(cpci));
 	cpci.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
 	cpci.pNext = NULL;
 	cpci.queueFamilyIndex = 0;
@@ -215,6 +221,7 @@ uint32_t gpu_count;
 	assert(err == VK_SUCCESS);
 
 	VkCommandBufferAllocateInfo cbai;
+	memset(&cbai, 0, sizeof(cbai));
 	cbai.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
 	cbai.pNext = NULL;
 	cbai.commandPool = cmd_pool;
@@ -265,6 +272,7 @@ void vk_minimal_draw(struct vk_minimal_context *actx)
 	assert(err == VK_SUCCESS);
 
 	VkImageSubresource is;
+	memset(&is, 0, sizeof(is));
 	is.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
 	is.mipLevel = 0;
 	is.arrayLayer = 0;
@@ -276,37 +284,12 @@ void vk_minimal_draw(struct vk_minimal_context *actx)
 
 	vkUnmapMemory(actx->device, actx->canvas.dm);
 
-	err = vkResetCommandBuffer(actx->cmd, 0);
-	assert(err == VK_SUCCESS);
-
-	VkCommandBufferInheritanceInfo cbii;
-	memset(&cbii, 0, sizeof(cbii));
-	cbii.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_INHERITANCE_INFO;
-	cbii.pNext = NULL;
-	cbii.renderPass = VK_NULL_HANDLE;
-	cbii.subpass = 0;
-	cbii.framebuffer = VK_NULL_HANDLE;
-	cbii.occlusionQueryEnable = VK_FALSE;
-	cbii.queryFlags = 0;
-	cbii.pipelineStatistics = 0;
-
-	VkCommandBufferBeginInfo cbbi;
-	memset(&cbbi, 0, sizeof(cbbi));
-	cbbi.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
-	cbbi.pNext = NULL;
-	cbbi.flags = 0;
-	cbbi.pInheritanceInfo = &cbii;
-
-	err = vkBeginCommandBuffer(actx->cmd, &cbbi);
-	assert(err == VK_SUCCESS);
-
-	vk_minimal_imb(actx, actx->canvas.image, VK_ACCESS_MEMORY_WRITE_BIT, VK_ACCESS_MEMORY_READ_BIT, VK_IMAGE_LAYOUT_PREINITIALIZED, VK_IMAGE_LAYOUT_GENERAL);
-
 	uint32_t idx = 0;
 
 	VkSemaphore acquire_sem;
 	VkSemaphore copy_sem;
 	VkSemaphoreCreateInfo csi;
+	memset(&csi, 0, sizeof(csi));
 	csi.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO;
 	csi.pNext = NULL;
 	csi.flags = 0;
@@ -316,35 +299,52 @@ void vk_minimal_draw(struct vk_minimal_context *actx)
 	err = vkCreateSemaphore(actx->device, &csi, NULL, &copy_sem);
 	assert(err == VK_SUCCESS);
 
-	err = vkAcquireNextImageKHR(actx->device, actx->swapchain.swapchain, 0, acquire_sem, VK_NULL_HANDLE, &idx);
+	err = vkAcquireNextImageKHR(actx->device, actx->swapchain.swapchain, UINT64_MAX, acquire_sem, VK_NULL_HANDLE, &idx);
 	assert(err == VK_SUCCESS);
 
-	vk_minimal_imb(actx, actx->swapchain.images[idx], VK_ACCESS_MEMORY_READ_BIT, VK_ACCESS_MEMORY_WRITE_BIT, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_GENERAL);
+	{
+		VkCommandBufferBeginInfo cbbi;
+		memset(&cbbi, 0, sizeof(cbbi));
+		cbbi.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+		cbbi.pNext = NULL;
+		cbbi.flags = 0;
+		cbbi.pInheritanceInfo = NULL;
 
-	VkImageCopy ic;
-	memset(&ic, 0, sizeof(ic));
-	ic.srcSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-	ic.srcSubresource.mipLevel = 0;
-	ic.srcSubresource.baseArrayLayer = 0;
-	ic.srcSubresource.layerCount = 1;
-	ic.srcOffset.x = 0;
-	ic.srcOffset.y = 0;
-	ic.srcOffset.z = 0;
-	ic.dstSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-	ic.dstSubresource.mipLevel = 0;
-	ic.dstSubresource.baseArrayLayer = 0;
-	ic.dstSubresource.layerCount = 1;
-	ic.dstOffset.x = 0;
-	ic.dstOffset.y = 0;
-	ic.dstOffset.z = 0;
-	ic.extent = extent_2d_to_3d(actx->extent);
+		err = vkBeginCommandBuffer(actx->cmd, &cbbi);
+		assert(err == VK_SUCCESS);
 
-	vkCmdCopyImage(actx->cmd, actx->canvas.image, VK_IMAGE_LAYOUT_GENERAL, actx->swapchain.images[idx], VK_IMAGE_LAYOUT_GENERAL, 1, &ic);
+		vk_minimal_imb(actx, actx->canvas.image, VK_ACCESS_MEMORY_WRITE_BIT, VK_ACCESS_MEMORY_READ_BIT, VK_IMAGE_LAYOUT_PREINITIALIZED, VK_IMAGE_LAYOUT_GENERAL);
 
-	vk_minimal_imb(actx, actx->swapchain.images[idx], VK_ACCESS_MEMORY_WRITE_BIT, VK_ACCESS_MEMORY_READ_BIT, VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR);
 
-	err = vkEndCommandBuffer(actx->cmd);
-	assert(err == VK_SUCCESS);
+		vk_minimal_imb(actx, actx->swapchain.images[idx], VK_ACCESS_MEMORY_READ_BIT, VK_ACCESS_MEMORY_WRITE_BIT, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_GENERAL);
+
+		VkImageCopy ic;
+		memset(&ic, 0, sizeof(ic));
+		ic.srcSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+		ic.srcSubresource.mipLevel = 0;
+		ic.srcSubresource.baseArrayLayer = 0;
+		ic.srcSubresource.layerCount = 1;
+		ic.srcOffset.x = 0;
+		ic.srcOffset.y = 0;
+		ic.srcOffset.z = 0;
+		ic.dstSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+		ic.dstSubresource.mipLevel = 0;
+		ic.dstSubresource.baseArrayLayer = 0;
+		ic.dstSubresource.layerCount = 1;
+		ic.dstOffset.x = 0;
+		ic.dstOffset.y = 0;
+		ic.dstOffset.z = 0;
+		ic.extent = extent_2d_to_3d(actx->extent);
+
+		vkCmdCopyImage(actx->cmd, actx->canvas.image, VK_IMAGE_LAYOUT_GENERAL, actx->swapchain.images[idx], VK_IMAGE_LAYOUT_GENERAL, 1, &ic);
+
+		vk_minimal_imb(actx, actx->swapchain.images[idx], VK_ACCESS_MEMORY_WRITE_BIT, VK_ACCESS_MEMORY_READ_BIT, VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR);
+
+		err = vkEndCommandBuffer(actx->cmd);
+		assert(err == VK_SUCCESS);
+	}
+
+	VkPipelineStageFlags stage_flags = VK_PIPELINE_STAGE_ALL_COMMANDS_BIT;
 
 	VkSubmitInfo si;
 	memset(&si, 0, sizeof(si));
@@ -352,7 +352,7 @@ void vk_minimal_draw(struct vk_minimal_context *actx)
 	si.pNext = NULL;
 	si.waitSemaphoreCount = 1;
 	si.pWaitSemaphores = &acquire_sem;
-	si.pWaitDstStageMask = NULL;
+	si.pWaitDstStageMask = &stage_flags;
 	si.commandBufferCount = 1;
 	si.pCommandBuffers = &actx->cmd;
 	si.signalSemaphoreCount = 1;
@@ -362,6 +362,7 @@ void vk_minimal_draw(struct vk_minimal_context *actx)
 	assert(err == VK_SUCCESS);
 
 	VkPresentInfoKHR pi;
+	memset(&pi, 0, sizeof(pi));
 	pi.sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR;
 	pi.pNext = NULL;
 	pi.waitSemaphoreCount = 1;
