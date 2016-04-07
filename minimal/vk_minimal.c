@@ -57,7 +57,7 @@ static uint32_t get_memory_type_idx(VkPhysicalDevice device, uint32_t typebits, 
 
 static void draw_grid(struct vk_minimal_context *actx, VkSubresourceLayout *layout, void *rgba_data)
 {
-	uint32_t color = 0xffffffff;
+	uint32_t color = 0x01010101 * (0xff & actx->cntr++);
 	uint32_t x, y;
 
 	rgba_data += layout->offset;
@@ -152,7 +152,7 @@ void vk_minimal_init(struct vk_minimal_context *actx)
 	sci.sType = VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR;
 	sci.pNext = NULL;
 	sci.surface = actx->surface;
-	sci.minImageCount = surf_cap.maxImageCount;
+	sci.minImageCount = 3;
 	sci.imageFormat = surfFormats[0].format;
 	sci.imageColorSpace = surfFormats[0].colorSpace;
 	sci.imageExtent = actx->extent;
@@ -265,9 +265,6 @@ void vk_minimal_draw(struct vk_minimal_context *actx)
 	VkResult err;
 	void *data;
 
-	err = vkQueueWaitIdle(actx->queue);
-	assert(err == VK_SUCCESS);
-
 	err = vkMapMemory(actx->device, actx->canvas.dm, 0, actx->canvas.size, 0, &data);
 	assert(err == VK_SUCCESS);
 
@@ -313,10 +310,10 @@ void vk_minimal_draw(struct vk_minimal_context *actx)
 		err = vkBeginCommandBuffer(actx->cmd, &cbbi);
 		assert(err == VK_SUCCESS);
 
-		vk_minimal_imb(actx, actx->canvas.image, VK_ACCESS_MEMORY_WRITE_BIT, VK_ACCESS_MEMORY_READ_BIT, VK_IMAGE_LAYOUT_PREINITIALIZED, VK_IMAGE_LAYOUT_GENERAL);
+		vk_minimal_imb(actx, actx->canvas.image, VK_ACCESS_MEMORY_WRITE_BIT | VK_ACCESS_HOST_WRITE_BIT, VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_TRANSFER_READ_BIT, VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
 
 
-		vk_minimal_imb(actx, actx->swapchain.images[idx], VK_ACCESS_MEMORY_READ_BIT, VK_ACCESS_MEMORY_WRITE_BIT, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_GENERAL);
+		vk_minimal_imb(actx, actx->swapchain.images[idx], 0, VK_ACCESS_MEMORY_WRITE_BIT | VK_ACCESS_TRANSFER_WRITE_BIT, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
 
 		VkImageCopy ic;
 		memset(&ic, 0, sizeof(ic));
@@ -336,9 +333,10 @@ void vk_minimal_draw(struct vk_minimal_context *actx)
 		ic.dstOffset.z = 0;
 		ic.extent = extent_2d_to_3d(actx->extent);
 
-		vkCmdCopyImage(actx->cmd, actx->canvas.image, VK_IMAGE_LAYOUT_GENERAL, actx->swapchain.images[idx], VK_IMAGE_LAYOUT_GENERAL, 1, &ic);
+		vkCmdCopyImage(actx->cmd, actx->canvas.image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, actx->swapchain.images[idx], VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &ic);
 
-		vk_minimal_imb(actx, actx->swapchain.images[idx], VK_ACCESS_MEMORY_WRITE_BIT, VK_ACCESS_MEMORY_READ_BIT, VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR);
+		vk_minimal_imb(actx, actx->swapchain.images[idx], VK_ACCESS_MEMORY_WRITE_BIT | VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_MEMORY_READ_BIT, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR);
+		vk_minimal_imb(actx, actx->canvas.image, VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_TRANSFER_READ_BIT, VK_ACCESS_MEMORY_WRITE_BIT | VK_ACCESS_HOST_WRITE_BIT, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VK_IMAGE_LAYOUT_GENERAL);
 
 		err = vkEndCommandBuffer(actx->cmd);
 		assert(err == VK_SUCCESS);

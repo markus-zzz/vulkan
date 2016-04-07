@@ -45,7 +45,7 @@ struct vk_minimal_context {
 	struct {
 		VkImage image;
 		VkDeviceMemory dm;
-		uint32_t size;
+		VkDeviceSize size;
 	} canvas;
 
 	uint32_t cntr;

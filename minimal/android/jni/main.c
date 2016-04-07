@@ -28,6 +28,7 @@ For more information, please refer to <http://unlicense.org>
 #include <assert.h>
 
 #include <android/log.h>
+#include <android/window.h>
 #include <android_native_app_glue.h>
 
 #include "vulkan_dlfcn/vulkan_dlfcn.h"
@@ -84,6 +85,9 @@ void android_main(struct android_app* state)
 	// Load libvulkan.so
 	vulkan_dlfcn_init();
 
+	// Turns out that this is quite essential to make the swapchain work properly
+	ANativeActivity_setWindowFlags(state->activity, AWINDOW_FLAG_FULLSCREEN, 0);
+
 	struct vk_minimal_context actx;
 	memset(&actx, 0, sizeof(actx));
 
@@ -129,7 +133,7 @@ void android_main(struct android_app* state)
 		int events;
 		struct android_poll_source* source;
 
-		while ((ident=ALooper_pollAll(1000, NULL, &events, (void**)&source)) != ALOOPER_POLL_ERROR)
+		while ((ident=ALooper_pollAll(0, NULL, &events, (void**)&source)) != ALOOPER_POLL_ERROR)
 		{
 			if (source != NULL)
 			{
