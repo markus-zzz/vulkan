@@ -1,0 +1,11 @@
+1. Setup project
+================
+> android update project --name "so-loader" --path . --target 1
+
+2. Build and install
+====================
+> ndk-build && ant debug && adb install -r bin/so-loader-debug.apk
+
+3. Build on device
+==================
+gcc -shared -o /sdcard/Download/libloadme.so -fPIC -landroid <source-files>
