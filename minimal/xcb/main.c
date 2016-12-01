@@ -88,7 +88,7 @@ int main(int argc, char **argv)
 	app.applicationVersion = 0;
 	app.pEngineName = NULL;
 	app.engineVersion = 0;
-	app.apiVersion = VK_API_VERSION;
+	app.apiVersion = VK_API_VERSION_1_0;
 
 	const char *iextensions[] = {
 	  "VK_KHR_surface",
@@ -112,6 +112,7 @@ int main(int argc, char **argv)
 	asci.pNext = NULL;
 	asci.flags = 0;
 	asci.window = window;
+	asci.connection = connection;
 
 	err = vkCreateXcbSurfaceKHR(actx.instance, &asci, NULL, &actx.surface);
 	assert(err == VK_SUCCESS);
